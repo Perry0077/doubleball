@@ -7,6 +7,7 @@
 import json
 import re
 import os
+import sys
 from datetime import datetime
 
 # 设置工作目录为脚本所在目录
@@ -46,17 +47,32 @@ def update_html(full_refresh=False):
     existing_data = get_existing_data(html)
 
     # 3. 决定抓取策略
-    if full_refresh or not existing_data:
-        print("执行全量抓取...")
-        records = fetch_all_data()
-        data = extract_fields(records)
-        new_count = len(data)
-    else:
-        print("执行增量更新...")
-        latest_records = fetch_latest_page()
-        new_records = extract_fields(latest_records)
-        data = merge_data(existing_data, new_records)
-        new_count = len(data) - len(existing_data)
+    try:
+        if full_refresh or not existing_data:
+            print("执行全量抓取...")
+            records = fetch_all_data()
+            data = extract_fields(records)
+            new_count = len(data)
+        else:
+            print("执行增量更新...")
+            latest_records = fetch_latest_page()
+            new_records = extract_fields(latest_records)
+            data = merge_data(existing_data, new_records)
+            new_count = len(data) - len(existing_data)
+    except Exception as e:
+        print(f"⚠️ API 请求失败: {e}")
+        print("跳过本次更新，保留现有数据")
+        sys.exit(0)  # 正常退出，不让 workflow 失败
+
+    # 检查是否获取到数据
+    if not data:
+        print("⚠️ 未获取到任何数据")
+        if existing_data:
+            print("保留现有数据，跳过更新")
+            sys.exit(0)
+        else:
+            print("错误：无现有数据且无法获取新数据")
+            sys.exit(1)
 
     # 4. 生成元数据
     update_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')

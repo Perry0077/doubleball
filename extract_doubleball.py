@@ -1,5 +1,6 @@
 import requests
 import csv
+import time
 
 # API 请求配置 (复用 scrape_doubleball.py 的配置)
 cookies = {
@@ -25,8 +26,8 @@ headers = {
 API_URL = 'https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice'
 
 
-def fetch_page(page_no, page_size=30):
-    """获取指定页码的数据"""
+def fetch_page(page_no, page_size=30, max_retries=3):
+    """获取指定页码的数据，带重试机制"""
     params = {
         'name': 'ssq',
         'issueCount': '',
@@ -39,8 +40,46 @@ def fetch_page(page_no, page_size=30):
         'week': '',
         'systemType': 'PC',
     }
-    response = requests.get(API_URL, params=params, headers=headers)
-    return response.json()
+
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(
+                API_URL,
+                params=params,
+                headers=headers,
+                timeout=30
+            )
+
+            # 检查状态码
+            if response.status_code != 200:
+                print(f"HTTP 错误: {response.status_code}")
+                raise Exception(f"HTTP {response.status_code}")
+
+            # 检查响应内容是否为空
+            if not response.text.strip():
+                print("响应内容为空")
+                raise Exception("空响应")
+
+            # 检查是否为 JSON
+            content_type = response.headers.get('Content-Type', '')
+            if 'json' not in content_type.lower() and 'javascript' not in content_type.lower():
+                print(f"响应类型异常: {content_type}")
+                print(f"响应内容: {response.text[:500]}")
+                raise Exception("非 JSON 响应")
+
+            return response.json()
+
+        except Exception as e:
+            print(f"第 {attempt + 1} 次请求失败: {e}")
+            if attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 5
+                print(f"等待 {wait_time} 秒后重试...")
+                time.sleep(wait_time)
+            else:
+                print("已达最大重试次数")
+                raise
+
+    return None
 
 
 def fetch_latest_page():
