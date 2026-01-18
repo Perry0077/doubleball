@@ -1,6 +1,8 @@
 import requests
 import csv
 import time
+import re
+import json
 
 # API 请求配置 (复用 scrape_doubleball.py 的配置)
 cookies = {
@@ -24,6 +26,87 @@ headers = {
 }
 
 API_URL = 'https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice'
+
+# 备用 API 配置 (zhcw.com - 中国福利彩票网)
+BACKUP_API_URL = 'https://jc.zhcw.com/port/client_json.php'
+backup_headers = {
+    'Accept': '*/*',
+    'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
+    'Connection': 'keep-alive',
+    'Referer': 'https://www.zhcw.com/',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+}
+
+
+def parse_jsonp(jsonp_str):
+    """解析 JSONP 响应，提取 JSON 数据"""
+    match = re.search(r'\((\{.*\})\)$', jsonp_str, re.DOTALL)
+    if match:
+        return json.loads(match.group(1))
+    raise Exception("无法解析 JSONP 响应")
+
+
+def convert_backup_record(record):
+    """将备用 API 的数据格式转换为标准格式"""
+    return {
+        'code': record.get('issue', ''),
+        'date': record.get('openTime', ''),
+        'red': record.get('frontWinningNum', '').replace(' ', ','),
+        'blue': record.get('backWinningNum', ''),
+    }
+
+
+def fetch_page_backup(page_no, page_size=30, max_retries=3):
+    """从备用 API 获取数据"""
+    params = {
+        'callback': 'jQuery_callback',
+        'transactionType': '10001001',
+        'lotteryId': '1',  # 双色球
+        'issueCount': str(page_size),
+        'startIssue': '',
+        'endIssue': '',
+        'startDate': '',
+        'endDate': '',
+        'pageNum': str(page_no),
+        'pageSize': str(page_size),
+        'type': '0',
+    }
+
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(
+                BACKUP_API_URL,
+                params=params,
+                headers=backup_headers,
+                timeout=30
+            )
+
+            if response.status_code != 200:
+                print(f"备用 API HTTP 错误: {response.status_code}")
+                raise Exception(f"HTTP {response.status_code}")
+
+            if not response.text.strip():
+                print("备用 API 响应内容为空")
+                raise Exception("空响应")
+
+            # 解析 JSONP
+            data = parse_jsonp(response.text)
+
+            # 转换数据格式
+            records = data.get('data', [])
+            return [convert_backup_record(r) for r in records]
+
+        except Exception as e:
+            print(f"备用 API 第 {attempt + 1} 次请求失败: {e}")
+            if attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 5
+                print(f"等待 {wait_time} 秒后重试...")
+                time.sleep(wait_time)
+            else:
+                print("备用 API 已达最大重试次数")
+                raise
+
+    return []
 
 
 def fetch_page(page_no, page_size=30, max_retries=3):
@@ -83,11 +166,29 @@ def fetch_page(page_no, page_size=30, max_retries=3):
 
 
 def fetch_latest_page():
-    """只获取第一页（最新数据）"""
+    """只获取第一页（最新数据），优先使用 zhcw.com，失败后回退到 cwl.gov.cn"""
     print("正在获取最新数据...")
-    data = fetch_page(1)
-    if data.get('state') == 0:
-        return data.get('result', [])
+
+    # 优先使用 zhcw.com (GitHub Actions 可访问)
+    try:
+        records = fetch_page_backup(1)
+        if records:
+            print("使用数据源: zhcw.com")
+            return records
+        print("zhcw.com 返回空数据")
+    except Exception as e:
+        print(f"zhcw.com 失败: {e}")
+
+    # 回退到 cwl.gov.cn
+    print("切换到备用数据源 (cwl.gov.cn)...")
+    try:
+        data = fetch_page(1)
+        if data.get('state') == 0:
+            return data.get('result', [])
+        print(f"cwl.gov.cn 返回错误状态: {data.get('state')}")
+    except Exception as e:
+        print(f"cwl.gov.cn 也失败: {e}")
+
     return []
 
 
