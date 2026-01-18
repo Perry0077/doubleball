@@ -1,0 +1,39 @@
+name: 更新双色球数据
+
+on:
+  schedule:
+    # 双色球开奖时间：周二、四、日 21:15
+    # UTC 时间 14:30 = 北京时间 22:30（开奖后 1 小时）
+    - cron: '30 14 * * 0,2,4'
+  workflow_dispatch:  # 支持手动触发
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
+        run: pip install requests
+
+      - name: 抓取数据并更新 HTML
+        run: python update_html.py
+
+      - name: 提交更改
+        run: |
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+          git add html/index.html
+          if git diff --staged --quiet; then
+            echo "没有数据更新"
+          else
+            git commit -m "🎱 自动更新双色球数据 $(date +'%Y-%m-%d')"
+            git push
+          fi
